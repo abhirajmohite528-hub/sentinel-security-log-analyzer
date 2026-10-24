@@ -126,3 +126,68 @@ def mark_alert_reviewed(alert_id: int):
         "success": True,
         "message": f"Alert {alert_id} marked as reviewed",
     }
+
+
+@app.get("/logs")
+def get_logs(
+    status: str | None = Query(default=None),
+    ip_address: str | None = Query(default=None),
+):
+    query = "SELECT * FROM login_logs WHERE 1=1"
+    parameters = []
+
+    if status:
+        query += " AND LOWER(status) = LOWER(?)"
+        parameters.append(status)
+
+    if ip_address:
+        query += " AND ip_address = ?"
+        parameters.append(ip_address)
+
+    query += " ORDER BY id DESC"
+
+    with get_connection() as connection:
+        rows = connection.execute(query, parameters).fetchall()
+
+    return {
+        "total_logs": len(rows),
+        "logs": [dict(row) for row in rows],
+    }
+
+
+@app.get("/dashboard")
+def get_dashboard():
+    with get_connection() as connection:
+        total_logs = connection.execute(
+            "SELECT COUNT(*) FROM login_logs"
+        ).fetchone()[0]
+
+        failed_logins = connection.execute(
+            "SELECT COUNT(*) FROM login_logs WHERE LOWER(status) = 'failed'"
+        ).fetchone()[0]
+
+        successful_logins = connection.execute(
+            "SELECT COUNT(*) FROM login_logs WHERE LOWER(status) = 'success'"
+        ).fetchone()[0]
+
+        total_alerts = connection.execute(
+            "SELECT COUNT(*) FROM alerts"
+        ).fetchone()[0]
+
+        unreviewed_alerts = connection.execute(
+            "SELECT COUNT(*) FROM alerts WHERE reviewed = 0"
+        ).fetchone()[0]
+
+        high_severity_alerts = connection.execute(
+            "SELECT COUNT(*) FROM alerts WHERE LOWER(severity) = 'high'"
+        ).fetchone()[0]
+
+    return {
+        "total_logs": total_logs,
+        "failed_logins": failed_logins,
+        "successful_logins": successful_logins,
+        "total_alerts": total_alerts,
+        "unreviewed_alerts": unreviewed_alerts,
+        "high_severity_alerts": high_severity_alerts
+    }
+
