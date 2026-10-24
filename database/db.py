@@ -19,9 +19,24 @@ def initialize_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 ip_address TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                username TEXT NOT NULL DEFAULT 'unknown'
             )
         """)
+
+        # Safely upgrade databases created by earlier versions.
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(login_logs)"
+            ).fetchall()
+        }
+
+        if "username" not in columns:
+            connection.execute("""
+                ALTER TABLE login_logs
+                ADD COLUMN username TEXT NOT NULL DEFAULT 'unknown'
+            """)
 
         connection.execute("""
             CREATE TABLE IF NOT EXISTS alerts (
@@ -41,9 +56,14 @@ def initialize_database():
 def save_logs(logs):
     with get_connection() as connection:
         connection.executemany("""
-            INSERT INTO login_logs (timestamp, ip_address, status)
-            VALUES (:timestamp, :ip_address, :status)
-        """, logs)
+            INSERT INTO login_logs
+                (timestamp, ip_address, status, username)
+            VALUES
+                (:timestamp, :ip_address, :status, :username)
+        """, [
+            {**log, "username": log.get("username") or "unknown"}
+            for log in logs
+        ])
 
 
 def save_alerts(alerts):

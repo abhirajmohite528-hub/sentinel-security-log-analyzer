@@ -11,10 +11,13 @@ from database.db import (
     save_alerts,
     get_connection,
 )
-from detectors.login_detector import detect_brute_force
+
+from detectors.login_detector import (
+    detect_brute_force,
+    detect_multiple_account_targeting,
+)
 
 
-# Initialize the database when the application starts.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_database()
@@ -29,11 +32,13 @@ app = FastAPI(
 )
 
 
-# Request models
+# Data models
+
 class LoginLog(BaseModel):
     timestamp: str
     ip_address: str
     status: str
+    username: str = "unknown"
 
 
 class LogBatch(BaseModel):
@@ -41,6 +46,7 @@ class LogBatch(BaseModel):
 
 
 # Home endpoint
+
 @app.get("/")
 def home():
     return {
@@ -51,18 +57,26 @@ def home():
 
 
 # Health check endpoint
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
 
 
-# Analyze and save login logs
+# Analyze login logs
+
 @app.post("/analyze")
 def analyze_logs(batch: LogBatch):
     logs = [log.model_dump() for log in batch.logs]
 
+    # Detection rule 1: repeated failed logins
     alerts = detect_brute_force(logs)
 
+    # Detection rule 2: one IP targeting multiple usernames
+    account_targeting_alerts = detect_multiple_account_targeting(logs)
+    alerts.extend(account_targeting_alerts)
+
+    # Save logs and alerts to the database
     save_logs(logs)
     save_alerts(alerts)
 
@@ -74,17 +88,12 @@ def analyze_logs(batch: LogBatch):
     }
 
 
-# Retrieve and filter stored security alerts
+# Get alerts with optional filters
+
 @app.get("/alerts")
 def get_alerts(
-    severity: str | None = Query(
-        default=None,
-        description="Filter by severity, e.g. High",
-    ),
-    reviewed: bool | None = Query(
-        default=None,
-        description="Filter by review status: true or false",
-    ),
+    severity: str | None = Query(default=None),
+    reviewed: bool | None = Query(default=None),
 ):
     query = "SELECT * FROM alerts WHERE 1=1"
     parameters = []
@@ -108,6 +117,8 @@ def get_alerts(
     }
 
 
+# Mark an alert as reviewed
+
 @app.patch("/alerts/{alert_id}/review")
 def mark_alert_reviewed(alert_id: int):
     with get_connection() as connection:
@@ -127,6 +138,8 @@ def mark_alert_reviewed(alert_id: int):
         "message": f"Alert {alert_id} marked as reviewed",
     }
 
+
+# Get login logs with optional filters
 
 @app.get("/logs")
 def get_logs(
@@ -155,6 +168,8 @@ def get_logs(
     }
 
 
+# Dashboard summary
+
 @app.get("/dashboard")
 def get_dashboard():
     with get_connection() as connection:
@@ -163,11 +178,13 @@ def get_dashboard():
         ).fetchone()[0]
 
         failed_logins = connection.execute(
-            "SELECT COUNT(*) FROM login_logs WHERE LOWER(status) = 'failed'"
+            "SELECT COUNT(*) FROM login_logs "
+            "WHERE LOWER(status) = 'failed'"
         ).fetchone()[0]
 
         successful_logins = connection.execute(
-            "SELECT COUNT(*) FROM login_logs WHERE LOWER(status) = 'success'"
+            "SELECT COUNT(*) FROM login_logs "
+            "WHERE LOWER(status) = 'success'"
         ).fetchone()[0]
 
         total_alerts = connection.execute(
@@ -179,7 +196,8 @@ def get_dashboard():
         ).fetchone()[0]
 
         high_severity_alerts = connection.execute(
-            "SELECT COUNT(*) FROM alerts WHERE LOWER(severity) = 'high'"
+            "SELECT COUNT(*) FROM alerts "
+            "WHERE LOWER(severity) = 'high'"
         ).fetchone()[0]
 
     return {
@@ -188,6 +206,5 @@ def get_dashboard():
         "successful_logins": successful_logins,
         "total_alerts": total_alerts,
         "unreviewed_alerts": unreviewed_alerts,
-        "high_severity_alerts": high_severity_alerts
+        "high_severity_alerts": high_severity_alerts,
     }
-
